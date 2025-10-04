@@ -12,11 +12,6 @@ jobs:
     permissions:
       contents: write
 
-    # All shell `run:` steps execute inside the subfolder with a space in its name
-    defaults:
-      run:
-        working-directory: "Calendar Agent"
-
     steps:
       - uses: actions/checkout@v4
 
@@ -26,27 +21,29 @@ jobs:
           cache: "pip"
           cache-dependency-path: "Calendar Agent/requirements.txt"
 
-      # (Optional) sanity check the workspace paths
-      - name: Show layout
+      # Preflight: prove the file is where we expect
+      - name: Preflight check
         run: |
           pwd
           ls -la
           echo "---- recursive ----"
           ls -R
+          echo "---- verify requirements.txt ----"
+          test -f "Calendar Agent/requirements.txt" && echo "Found: Calendar Agent/requirements.txt" || (echo "NOT FOUND" && exit 1)
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r "Calendar Agent/requirements.txt"
 
-      # Build CSVs; if the secret isn't set, the script will just skip online lookups
       - name: Build CSVs
         env:
+          # Optional: only needed if you use online ticker lookup
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
-        run: python src/main.py
+        run: python "Calendar Agent/src/main.py"
 
       - name: Commit CSV updates
         run: |
           git config user.name "pdufa-bot"
           git config user.email "pdufa-bot@users.noreply.github.com"
-          git add data/pdufa_master.csv data/blank.csv data/state.json || true
+          git add "Calendar Agent/data/pdufa_master.csv" "Calendar Agent/data/blank.csv" "Calendar Agent/data/state.json" || true
           git commit -m "chore: daily PDUFA update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "No changes"
           git push
