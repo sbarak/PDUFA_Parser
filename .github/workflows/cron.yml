@@ -14,6 +14,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0           # <-- needed so rebase works against full history
+          ref: main                # <-- ensure we're on main
 
       - uses: actions/setup-python@v5
         with:
@@ -21,7 +24,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: "Calendar Agent/requirements.txt"
 
-      # Preflight: prove the file is where we expect
+      # Sanity check paths
       - name: Preflight check
         run: |
           pwd
@@ -36,14 +39,26 @@ jobs:
 
       - name: Build CSVs
         env:
-          # Optional: only needed if you use online ticker lookup
+          # Optional: only needed for online ticker lookup
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
         run: python "Calendar Agent/src/main.py"
 
-      - name: Commit CSV updates
+      - name: Configure Git author
         run: |
           git config user.name "pdufa-bot"
           git config user.email "pdufa-bot@users.noreply.github.com"
+
+      - name: Commit CSV updates
+        run: |
           git add "Calendar Agent/data/pdufa_master.csv" "Calendar Agent/data/blank.csv" "Calendar Agent/data/state.json" || true
-          git commit -m "chore: daily PDUFA update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "No changes"
-          git push
+          git commit -m "chore: daily PDUFA update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "No changes to commit"
+
+      # *** KEY FIX: rebase onto latest remote main before pushing ***
+      - name: Rebase onto remote main
+        run: |
+          git fetch origin main
+          # If there are new commits upstream, replay ours on top of them
+          git pull --rebase origin main || true
+
+      - name: Push changes
+        run: git push origin HEAD:main
