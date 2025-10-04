@@ -1,7 +1,9 @@
 name: pdufa-daily-ics
+
 on:
   schedule:
-    - cron: "20 3 * * *"   # 03:20 UTC ≈ 06:20 Asia/Jerusalem
+    # Runs daily at 03:20 UTC (~06:20 Asia/Jerusalem)
+    - cron: "20 3 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -9,23 +11,38 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
+    # All shell `run:` steps execute inside the subfolder with a space in its name
+    defaults:
+      run:
+        working-directory: "Calendar Agent"
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "Calendar Agent/requirements.txt"
 
-      - run: pip install -r requirements.txt
+      # (Optional) sanity check the workspace paths
+      - name: Show layout
+        run: |
+          pwd
+          ls -la
+          echo "---- recursive ----"
+          ls -R
 
-      # Run your parser to refresh the CSVs
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Build CSVs; if the secret isn't set, the script will just skip online lookups
       - name: Build CSVs
-        run: python src/main.py
         env:
-          # Needed only if you're using the online ticker lookup
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+        run: python src/main.py
 
-      # Commit any changes to CSVs/state
       - name: Commit CSV updates
         run: |
           git config user.name "pdufa-bot"
