@@ -1,5 +1,5 @@
 ics_urls:
   - https://calendar.google.com/calendar/ical/5dso8589486irtj53sdkr4h6ek%40group.calendar.google.com/public/basic.ics
 timezone: America/Los_Angeles
-min_date: "@today"
+min_date: "2025-01-01"
 debug: true
