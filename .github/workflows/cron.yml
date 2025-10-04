@@ -1,0 +1,35 @@
+name: pdufa-daily-ics
+on:
+  schedule:
+    - cron: "20 3 * * *"   # 03:20 UTC ≈ 06:20 Asia/Jerusalem
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      # Run your parser to refresh the CSVs
+      - name: Build CSVs
+        run: python src/main.py
+        env:
+          # Needed only if you're using the online ticker lookup
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+
+      # Commit any changes to CSVs/state
+      - name: Commit CSV updates
+        run: |
+          git config user.name "pdufa-bot"
+          git config user.email "pdufa-bot@users.noreply.github.com"
+          git add data/pdufa_master.csv data/blank.csv data/state.json || true
+          git commit -m "chore: daily PDUFA update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "No changes"
+          git push
