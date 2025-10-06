@@ -19,11 +19,12 @@ jobs:
       - name: Notify start (Telegram)
         run: |
           if [[ -n "$TG_TOKEN" && -n "$TG_CHAT_ID" ]]; then
+            MSG=$'🟡 <b>${{ github.workflow }}</b> started\nrepo: <code>${{ github.repository }}</code>\nrun: <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">#${{ github.run_number }}</a>'
             curl -sS --get "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               --data-urlencode chat_id="${TG_CHAT_ID}" \
               --data-urlencode parse_mode=HTML \
               --data-urlencode disable_web_page_preview=true \
-              --data-urlencode text="<b>${{ github.workflow }}</b> started<br/>repo: <code>${{ github.repository }}</code><br/>run: <a href='https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'>#${{ github.run_number }}</a>"
+              --data-urlencode text="$MSG"
           fi
 
       - uses: actions/checkout@v4
@@ -76,21 +77,27 @@ jobs:
         if: ${{ success() }}
         run: |
           if [[ -n "$TG_TOKEN" && -n "$TG_CHAT_ID" ]]; then
-            LASTMSG="$(git log -1 --pretty=%B | head -n 1)"
+            LASTMSG="$(git log -1 --pretty=%s)"
+            # HTML-escape just in case
+            LASTMSG="${LASTMSG//&/&amp;}"
+            LASTMSG="${LASTMSG//</&lt;}"
+            LASTMSG="${LASTMSG//>/&gt;}"
+            MSG=$'🟢 <b>${{ github.workflow }}</b> finished OK\ncommit: <code>'"$LASTMSG"$'</code>\nrun: <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">#${{ github.run_number }}</a>'
             curl -sS --get "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               --data-urlencode chat_id="${TG_CHAT_ID}" \
               --data-urlencode parse_mode=HTML \
               --data-urlencode disable_web_page_preview=true \
-              --data-urlencode text="<b>${{ github.workflow }}</b> finished OK<br/>commit: <code>${LASTMSG}</code><br/>run: <a href='https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'>#${{ github.run_number }}</a>"
+              --data-urlencode text="$MSG"
           fi
 
       - name: Notify failure (Telegram)
         if: ${{ failure() }}
         run: |
           if [[ -n "$TG_TOKEN" && -n "$TG_CHAT_ID" ]]; then
+            MSG=$'🔴 <b>${{ github.workflow }}</b> FAILED\nrepo: <code>${{ github.repository }}</code>\nrun: <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">#${{ github.run_number }}</a>'
             curl -sS --get "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               --data-urlencode chat_id="${TG_CHAT_ID}" \
               --data-urlencode parse_mode=HTML \
               --data-urlencode disable_web_page_preview=true \
-              --data-urlencode text="<b>${{ github.workflow }}</b> FAILED<br/>repo: <code>${{ github.repository }}</code><br/>run: <a href='https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'>#${{ github.run_number }}</a>"
+              --data-urlencode text="$MSG"
           fi
