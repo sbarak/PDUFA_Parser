@@ -24,20 +24,24 @@ jobs:
           cache: "pip"
           cache-dependency-path: "Calendar Agent/requirements.txt"
 
-      # Optional: quick “start” ping on manual runs
-      - name: Notify Telegram (started)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        uses: appleboy/telegram-action@v1.0.1
-        with:
-          to: ${{ secrets.TELEGRAM_TO }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          disable_web_page_preview: true
-          message: |
-            🚀 Manually triggered run started
-            Repo: ${{ github.repository }}
-            Branch: ${{ github.ref_name }}
-            Run: #${{ github.run_number }}
+      # ---- Telegram self-test (prints exact errors) ----
+      - name: Telegram self-test
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_TO }}
+        run: |
+          set -e
+          echo "== getMe =="
+          curl -sS "https://api.telegram.org/bot${TOKEN}/getMe" | jq .
+          echo "== getChat =="
+          curl -sS --get "https://api.telegram.org/bot${TOKEN}/getChat" --data-urlencode "chat_id=${CHAT}" | jq .
+          echo "== sendMessage =="
+          curl -sS --get "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT}" \
+            --data-urlencode "text=CI ping from GitHub Actions ✅ ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))" \
+            --data-urlencode "disable_web_page_preview=true" | jq .
 
+      # Preflight check
       - name: Preflight check
         run: |
           pwd
@@ -52,7 +56,6 @@ jobs:
 
       - name: Build CSVs
         env:
-          # Optional: only needed for online ticker lookup
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
         run: python "Calendar Agent/src/main.py"
 
@@ -66,7 +69,6 @@ jobs:
           git add "Calendar Agent/data/pdufa_master.csv" "Calendar Agent/data/blank.csv" "Calendar Agent/data/state.json" || true
           git commit -m "chore: daily PDUFA update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "No changes to commit"
 
-      # Rebase onto latest remote main before pushing
       - name: Rebase onto remote main
         run: |
           git fetch origin main
@@ -75,7 +77,7 @@ jobs:
       - name: Push changes
         run: git push origin HEAD:main
 
-      # --- Telegram notifications ---
+      # --- Telegram notifications (appleboy action) ---
       - name: Notify Telegram (success)
         if: ${{ success() }}
         uses: appleboy/telegram-action@v1.0.1
@@ -84,7 +86,7 @@ jobs:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           disable_web_page_preview: true
           message: |
-            ✅ PDUFA daily job succeeded
+            PDUFA daily job succeeded
             Repo: ${{ github.repository }}
             Branch: ${{ github.ref_name }}
             Run: #${{ github.run_number }}
@@ -100,9 +102,9 @@ jobs:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           disable_web_page_preview: true
           message: |
-            ❌ PDUFA daily job FAILED
+            PDUFA daily job FAILED
             Repo: ${{ github.repository }}
             Branch: ${{ github.ref_name }}
             Run: #${{ github.run_number }}
             Trigger: ${{ github.event_name }}
-            Check logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
