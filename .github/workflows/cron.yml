@@ -11,26 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    env:
-      TG_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-      TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     steps:
-      - name: Notify start (Telegram)
-        run: |
-          if [[ -n "$TG_TOKEN" && -n "$TG_CHAT_ID" ]]; then
-            MSG=$'🟡 <b>${{ github.workflow }}</b> started\nrepo: <code>${{ github.repository }}</code>\nrun: <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">#${{ github.run_number }}</a>'
-            curl -sS --get "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-              --data-urlencode chat_id="${TG_CHAT_ID}" \
-              --data-urlencode parse_mode=HTML \
-              --data-urlencode disable_web_page_preview=true \
-              --data-urlencode text="$MSG"
-          fi
-
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          ref: main
+          fetch-depth: 0           # <-- needed so rebase works against full history
+          ref: main                # <-- ensure we're on main
 
       - uses: actions/setup-python@v5
         with:
@@ -38,6 +24,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: "Calendar Agent/requirements.txt"
 
+      # Sanity check paths
       - name: Preflight check
         run: |
           pwd
@@ -52,6 +39,7 @@ jobs:
 
       - name: Build CSVs
         env:
+          # Optional: only needed for online ticker lookup
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
         run: python "Calendar Agent/src/main.py"
 
@@ -65,39 +53,44 @@ jobs:
           git add "Calendar Agent/data/pdufa_master.csv" "Calendar Agent/data/blank.csv" "Calendar Agent/data/state.json" || true
           git commit -m "chore: daily PDUFA update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "No changes to commit"
 
+      # Keep our local branch up-to-date; our commit (if any) will be replayed on top
       - name: Rebase onto remote main
         run: |
           git fetch origin main
           git pull --rebase origin main || true
 
+      # Detect if *this* last commit changed the CSV file
+      - name: Detect CSV change
+        id: diff
+        run: |
+          FILE="Calendar Agent/data/pdufa_master.csv"
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            if git diff --quiet HEAD^ HEAD -- "$FILE"; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # No parent commit (edge case) — treat as changed if file exists in repo
+            if git ls-files --error-unmatch "$FILE" >/dev/null 2>&1; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
       - name: Push changes
         run: git push origin HEAD:main
 
+      # Notify only if the CSV actually changed and the push succeeded
       - name: Notify success (Telegram)
-        if: ${{ success() }}
+        if: ${{ success() && steps.diff.outputs.changed == 'true' }}
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          if [[ -n "$TG_TOKEN" && -n "$TG_CHAT_ID" ]]; then
-            LASTMSG="$(git log -1 --pretty=%s)"
-            # HTML-escape just in case
-            LASTMSG="${LASTMSG//&/&amp;}"
-            LASTMSG="${LASTMSG//</&lt;}"
-            LASTMSG="${LASTMSG//>/&gt;}"
-            MSG=$'🟢 <b>${{ github.workflow }}</b> finished OK\ncommit: <code>'"$LASTMSG"$'</code>\nrun: <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">#${{ github.run_number }}</a>'
-            curl -sS --get "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-              --data-urlencode chat_id="${TG_CHAT_ID}" \
-              --data-urlencode parse_mode=HTML \
-              --data-urlencode disable_web_page_preview=true \
-              --data-urlencode text="$MSG"
-          fi
-
-      - name: Notify failure (Telegram)
-        if: ${{ failure() }}
-        run: |
-          if [[ -n "$TG_TOKEN" && -n "$TG_CHAT_ID" ]]; then
-            MSG=$'🔴 <b>${{ github.workflow }}</b> FAILED\nrepo: <code>${{ github.repository }}</code>\nrun: <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">#${{ github.run_number }}</a>'
-            curl -sS --get "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-              --data-urlencode chat_id="${TG_CHAT_ID}" \
-              --data-urlencode parse_mode=HTML \
-              --data-urlencode disable_web_page_preview=true \
-              --data-urlencode text="$MSG"
-          fi
+          COMMIT=$(git rev-parse --short HEAD)
+          MSG=$(printf "✅ PDUFA CSV updated.\nRepo: %s\nRun: #%s\nCommit: %s" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_NUMBER}" "${COMMIT}")
+          curl -sS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT_ID}" \
+            --data-urlencode "text=${MSG}"
