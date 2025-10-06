@@ -15,8 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0           # <-- needed so rebase works against full history
-          ref: main                # <-- ensure we're on main
+          fetch-depth: 0
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
@@ -24,7 +24,20 @@ jobs:
           cache: "pip"
           cache-dependency-path: "Calendar Agent/requirements.txt"
 
-      # Sanity check paths
+      # Optional: quick “start” ping on manual runs
+      - name: Notify Telegram (started)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: appleboy/telegram-action@v1.0.1
+        with:
+          to: ${{ secrets.TELEGRAM_TO }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          disable_web_page_preview: true
+          message: |
+            🚀 Manually triggered run started
+            Repo: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Run: #${{ github.run_number }}
+
       - name: Preflight check
         run: |
           pwd
@@ -53,46 +66,43 @@ jobs:
           git add "Calendar Agent/data/pdufa_master.csv" "Calendar Agent/data/blank.csv" "Calendar Agent/data/state.json" || true
           git commit -m "chore: daily PDUFA update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "No changes to commit"
 
-      # *** KEY FIX: rebase onto latest remote main before pushing ***
+      # Rebase onto latest remote main before pushing
       - name: Rebase onto remote main
         run: |
           git fetch origin main
-          # If there are new commits upstream, replay ours on top of them
           git pull --rebase origin main || true
 
       - name: Push changes
         run: git push origin HEAD:main
 
-      # -----------------------------
-      # Telegram notifications
-      # -----------------------------
-
-      - name: Telegram notify (success)
+      # --- Telegram notifications ---
+      - name: Notify Telegram (success)
         if: ${{ success() }}
-        uses: appleboy/telegram-action@v1
+        uses: appleboy/telegram-action@v1.0.1
         with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          format: markdown
           disable_web_page_preview: true
           message: |
-            **${{ github.repository }}** cron run #${{ github.run_number }} succeeded
-            Workflow: `${{ github.workflow }}`
-            Branch: `${{ github.ref_name }}`
-            Commit: `${{ github.sha }}`
-            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            ✅ PDUFA daily job succeeded
+            Repo: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Run: #${{ github.run_number }}
+            Commit: ${{ github.sha }}
+            Trigger: ${{ github.event_name }}
+            Time: ${{ github.run_started_at }}
 
-      - name: Telegram notify (failure)
-        # Will still run if any prior step in this job failed
+      - name: Notify Telegram (failure)
         if: ${{ failure() }}
-        uses: appleboy/telegram-action@v1
+        uses: appleboy/telegram-action@v1.0.1
         with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          to: ${{ secrets.TELEGRAM_TO }}
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          format: markdown
           disable_web_page_preview: true
           message: |
-            **${{ github.repository }}** cron run #${{ github.run_number }} FAILED
-            Workflow: `${{ github.workflow }}`
-            Branch: `${{ github.ref_name }}`
-            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            ❌ PDUFA daily job FAILED
+            Repo: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Run: #${{ github.run_number }}
+            Trigger: ${{ github.event_name }}
+            Check logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
