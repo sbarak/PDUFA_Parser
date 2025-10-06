@@ -11,8 +11,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      TG_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     steps:
+      - name: Notify start (Telegram)
+        run: |
+          if [[ -n "$TG_TOKEN" && -n "$TG_CHAT_ID" ]]; then
+            curl -sS --get "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              --data-urlencode chat_id="${TG_CHAT_ID}" \
+              --data-urlencode parse_mode=HTML \
+              --data-urlencode disable_web_page_preview=true \
+              --data-urlencode text="<b>${{ github.workflow }}</b> started<br/>repo: <code>${{ github.repository }}</code><br/>run: <a href='https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'>#${{ github.run_number }}</a>"
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -24,24 +37,6 @@ jobs:
           cache: "pip"
           cache-dependency-path: "Calendar Agent/requirements.txt"
 
-      # ---- Telegram self-test (prints exact errors) ----
-      - name: Telegram self-test
-        env:
-          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT: ${{ secrets.TELEGRAM_TO }}
-        run: |
-          set -e
-          echo "== getMe =="
-          curl -sS "https://api.telegram.org/bot${TOKEN}/getMe" | jq .
-          echo "== getChat =="
-          curl -sS --get "https://api.telegram.org/bot${TOKEN}/getChat" --data-urlencode "chat_id=${CHAT}" | jq .
-          echo "== sendMessage =="
-          curl -sS --get "https://api.telegram.org/bot${TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${CHAT}" \
-            --data-urlencode "text=CI ping from GitHub Actions ✅ ($(date -u +'%Y-%m-%dT%H:%M:%SZ'))" \
-            --data-urlencode "disable_web_page_preview=true" | jq .
-
-      # Preflight check
       - name: Preflight check
         run: |
           pwd
@@ -77,34 +72,25 @@ jobs:
       - name: Push changes
         run: git push origin HEAD:main
 
-      # --- Telegram notifications (appleboy action) ---
-      - name: Notify Telegram (success)
+      - name: Notify success (Telegram)
         if: ${{ success() }}
-        uses: appleboy/telegram-action@v1.0.1
-        with:
-          to: ${{ secrets.TELEGRAM_TO }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          disable_web_page_preview: true
-          message: |
-            PDUFA daily job succeeded
-            Repo: ${{ github.repository }}
-            Branch: ${{ github.ref_name }}
-            Run: #${{ github.run_number }}
-            Commit: ${{ github.sha }}
-            Trigger: ${{ github.event_name }}
-            Time: ${{ github.run_started_at }}
+        run: |
+          if [[ -n "$TG_TOKEN" && -n "$TG_CHAT_ID" ]]; then
+            LASTMSG="$(git log -1 --pretty=%B | head -n 1)"
+            curl -sS --get "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              --data-urlencode chat_id="${TG_CHAT_ID}" \
+              --data-urlencode parse_mode=HTML \
+              --data-urlencode disable_web_page_preview=true \
+              --data-urlencode text="<b>${{ github.workflow }}</b> finished OK<br/>commit: <code>${LASTMSG}</code><br/>run: <a href='https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'>#${{ github.run_number }}</a>"
+          fi
 
-      - name: Notify Telegram (failure)
+      - name: Notify failure (Telegram)
         if: ${{ failure() }}
-        uses: appleboy/telegram-action@v1.0.1
-        with:
-          to: ${{ secrets.TELEGRAM_TO }}
-          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          disable_web_page_preview: true
-          message: |
-            PDUFA daily job FAILED
-            Repo: ${{ github.repository }}
-            Branch: ${{ github.ref_name }}
-            Run: #${{ github.run_number }}
-            Trigger: ${{ github.event_name }}
-            Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ -n "$TG_TOKEN" && -n "$TG_CHAT_ID" ]]; then
+            curl -sS --get "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              --data-urlencode chat_id="${TG_CHAT_ID}" \
+              --data-urlencode parse_mode=HTML \
+              --data-urlencode disable_web_page_preview=true \
+              --data-urlencode text="<b>${{ github.workflow }}</b> FAILED<br/>repo: <code>${{ github.repository }}</code><br/>run: <a href='https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'>#${{ github.run_number }}</a>"
+          fi
