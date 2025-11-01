@@ -51,7 +51,7 @@ jobs:
               result = resp.json()
 
       - name: Notify on successful push (Telegram)
-        if: ${{steps.upload.result.get == "success"}}
+        if: ${{steps.upload.result.get == 'success'}}
         run: |
           COMMIT=$(git rev-parse --short HEAD)
           MSG=$(printf "✅ QC ObjectStore updated: *{key}*\nTime: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_NUMBER}" "${COMMIT}")
