@@ -20,7 +20,7 @@ jobs:
           QC_API_TOKEN: ${{ secrets.QC_API_TOKEN }}
           QC_ORGANIZATION_ID: ${{ secrets.QC_ORGANIZATION_ID }}
           QC_KEY: "PDUFA_Updated_Daily.csv"
-          FILE_PATH: "data/pdufa_master.csv"
+          FILE_PATH: "Calendar Agent/data/pdufa_master.csv"
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
