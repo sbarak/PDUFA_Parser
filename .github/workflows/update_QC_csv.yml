@@ -1,1 +1,73 @@
+name: Upload CSV to QuantConnect Object Store
 
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "data/PDUFA_Future.csv"
+
+jobs:
+  upload-to-qc-objectstore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Upload to QuantConnect Object Store
+        env:
+          QC_USER_ID: ${{ secrets.QC_USER_ID }}
+          QC_API_TOKEN: ${{ secrets.QC_API_TOKEN }}
+          QC_ORGANIZATION_ID: ${{ secrets.QC_ORGANIZATION_ID }}
+          QC_KEY: "PDUFA_Updated_Daily.csv"
+          FILE_PATH: "data/PDUFA_Future.csv"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - << 'PY'
+          import base64, hashlib, time, requests, os, datetime
+
+          BASE_URL = "https://www.quantconnect.com/api/v2"
+          user_id = os.environ["QC_USER_ID"]
+          api_token = os.environ["QC_API_TOKEN"]
+          org_id = os.environ["QC_ORGANIZATION_ID"]
+          key = os.environ["QC_KEY"]
+          file_path = os.environ["FILE_PATH"]
+          tg_token = os.environ["TELEGRAM_BOT_TOKEN"]
+          tg_chat = os.environ["TELEGRAM_CHAT_ID"]
+
+          def send_tg(msg):
+              url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+              payload = {"chat_id": tg_chat, "text": msg, "disable_web_page_preview": True}
+              try:
+                  requests.post(url, data=payload, timeout=10)
+              except Exception as e:
+                  print(f"⚠️ Telegram failed: {e}")
+
+          try:
+              # === Auth header ===
+              timestamp = str(int(time.time()))
+              hashed = hashlib.sha256(f"{api_token}:{timestamp}".encode()).hexdigest()
+              auth = base64.b64encode(f"{user_id}:{hashed}".encode()).decode()
+              headers = {"Authorization": f"Basic {auth}", "Timestamp": timestamp}
+
+              # === Upload file ===
+              with open(file_path, "rb") as f:
+                  files = {"objectData": f.read()}
+              data = {"organizationId": org_id, "key": key}
+              resp = requests.post(f"{BASE_URL}/object/set", headers=headers, data=data, files=files)
+              resp.raise_for_status()
+              result = resp.json()
+
+              if result.get("success"):
+                  msg = f"✅ QC ObjectStore updated: *{key}*\nTime: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                  print(msg)
+                  send_tg(msg)
+              else:
+                  msg = f"❌ QC upload failed: {result}"
+                  print(msg)
+                  send_tg(msg)
+          except Exception as e:
+              msg = f"❌ Exception during upload: {e}"
+              print(msg)
+              send_tg(msg)
+          PY
