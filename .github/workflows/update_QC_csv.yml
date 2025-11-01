@@ -4,7 +4,8 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "data/PDUFA_Future.csv"
+      - "data/PDUFA_Future.csv"   # run only when this file changes
+  workflow_dispatch:               # allow manual runs from the Actions tab
 
 jobs:
   upload-to-qc-objectstore:
