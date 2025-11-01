@@ -4,8 +4,8 @@ on:
   push:
     branches: [ main ]
     paths:
-      - "data/PDUFA_Future.csv"   # run only when this file changes
-  workflow_dispatch:               # allow manual runs from the Actions tab
+      - "Calendar Agent/data/pdufa_master.csv"  # trigger on this file
+  workflow_dispatch:
 
 jobs:
   upload-to-qc-objectstore:
@@ -14,8 +14,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Upload to QuantConnect Object Store
-        id: upload
+      - name: Upload to QuantConnect + Telegram notify
         env:
           QC_USER_ID: ${{ secrets.QC_USER_ID }}
           QC_API_TOKEN: ${{ secrets.QC_API_TOKEN }}
@@ -24,9 +23,12 @@ jobs:
           FILE_PATH: "Calendar Agent/data/pdufa_master.csv"
           TG_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_RUN: ${{ github.run_number }}
+          GITHUB_SHA: ${{ github.sha }}
         run: |
           python - << 'PY'
-          import base64, hashlib, time, requests, os, datetime
+          import base64, hashlib, time, requests, os, datetime, pathlib, textwrap
 
           BASE_URL = "https://www.quantconnect.com/api/v2"
           user_id = os.environ["QC_USER_ID"]
@@ -34,27 +36,83 @@ jobs:
           org_id = os.environ["QC_ORGANIZATION_ID"]
           key = os.environ["QC_KEY"]
           file_path = os.environ["FILE_PATH"]
+          tg_token = os.environ.get("TG_TOKEN")
+          tg_chat  = os.environ.get("TG_CHAT_ID")
+
+          repo = os.environ.get("GITHUB_REPO", "")
+          runn = os.environ.get("GITHUB_RUN", "")
+          sha  = os.environ.get("GITHUB_SHA", "")
+          short_sha = sha[:7] if sha else ""
+
+          def send_tg(msg: str):
+              if not tg_token or not tg_chat:
+                  print("ℹ️ Telegram not configured; skipping notify.")
+                  return
+              try:
+                  requests.post(
+                      f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                      data={
+                          "chat_id": tg_chat,
+                          "text": msg,
+                          "disable_web_page_preview": True
+                      },
+                      timeout=10
+                  )
+              except Exception as e:
+                  print(f"⚠️ Telegram failed: {e}")
 
           try:
-              # === Auth header ===
-              timestamp = str(int(time.time()))
-              hashed = hashlib.sha256(f"{api_token}:{timestamp}".encode()).hexdigest()
-              auth = base64.b64encode(f"{user_id}:{hashed}".encode()).decode()
-              headers = {"Authorization": f"Basic {auth}", "Timestamp": timestamp}
+              # Ensure file exists
+              if not pathlib.Path(file_path).is_file():
+                  raise FileNotFoundError(f"File not found: {file_path}")
 
-              # === Upload file ===
+              # === Auth header per QC spec ===
+              ts = str(int(time.time()))
+              hashed = hashlib.sha256(f"{api_token}:{ts}".encode()).hexdigest()
+              auth = base64.b64encode(f"{user_id}:{hashed}".encode()).decode()
+              headers = {"Authorization": f"Basic {auth}", "Timestamp": ts}
+
+              # === Upload ===
               with open(file_path, "rb") as f:
                   files = {"objectData": f.read()}
               data = {"organizationId": org_id, "key": key}
-              resp = requests.post(f"{BASE_URL}/object/set", headers=headers, data=data, files=files)
-              resp.raise_for_status()
-              result = resp.json()
 
-      - name: Notify on successful push (Telegram)
-        if: ${{steps.upload.result.get == 'success'}}
-        run: |
-          COMMIT=$(git rev-parse --short HEAD)
-          MSG=$(printf "✅ QC ObjectStore updated: *{key}*\nTime: {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_NUMBER}" "${COMMIT}")
-          curl -sS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TG_CHAT_ID}" \
-            --data-urlencode "text=${MSG}"
+              r = requests.post(f"{BASE_URL}/object/set", headers=headers, data=data, files=files, timeout=60)
+              r.raise_for_status()
+              ok = r.json().get("success", False)
+
+              now_utc = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+              if ok:
+                  msg = textwrap.dedent(f"""\
+                      ✅ QC ObjectStore updated
+                      Key: {key}
+                      File: {file_path}
+                      Repo: {repo} (run #{runn}, {short_sha})
+                      Time: {now_utc}
+                  """).strip()
+              else:
+                  msg = textwrap.dedent(f"""\
+                      ❌ QC upload failed
+                      Key: {key}
+                      File: {file_path}
+                      Repo: {repo} (run #{runn}, {short_sha})
+                      Time: {now_utc}
+                      Response: {r.text[:500]}
+                  """).strip()
+
+              print(msg)
+              send_tg(msg)
+
+          except Exception as e:
+              now_utc = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+              msg = textwrap.dedent(f"""\
+                  ❌ Exception during upload
+                  Key: {key}
+                  File: {file_path}
+                  Repo: {repo} (run #{runn}, {short_sha})
+                  Time: {now_utc}
+                  Error: {e}
+              """).strip()
+              print(msg)
+              send_tg(msg)
+          PY
