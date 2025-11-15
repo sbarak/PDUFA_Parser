@@ -1,20 +1,52 @@
 name: Upload CSV to QuantConnect Object Store
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "Calendar Agent/data/pdufa_master.csv"  # trigger on this file
+  schedule:
+    # Runs daily at 03:30 UTC
+    - cron: "30 3 * * *"
   workflow_dispatch:
 
 jobs:
   upload-to-qc-objectstore:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          # We need at least 2 commits of history to compare HEAD and HEAD^
+          fetch-depth: 2
+          ref: main
+
+      - name: Check if CSV changed in last commit
+        id: csvcheck
+        run: |
+          set -e
+          FILE="Calendar Agent/data/pdufa_master.csv"
+
+          if [ ! -f "$FILE" ]; then
+            echo "CSV file not found at: $FILE"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # If there is a previous commit, compare HEAD^..HEAD for this file
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            if git diff --quiet HEAD^ HEAD -- "$FILE"; then
+              echo "CSV did NOT change in last commit."
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "CSV changed in last commit."
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # Repo has only one commit – treat as "changed" so we upload once
+            echo "Only one commit in repo; treating CSV as changed."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload to QuantConnect + Telegram notify
+        if: steps.csvcheck.outputs.changed == 'true'
         env:
           QC_USER_ID: ${{ secrets.QC_USER_ID }}
           QC_API_TOKEN: ${{ secrets.QC_API_TOKEN }}
@@ -28,7 +60,7 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
         run: |
           python - << 'PY'
-          import base64, hashlib, time, requests, os, datetime, pathlib, textwrap
+          import base64, hashlib, time, requests, os, datetime, pathlib, textwrap, sys
 
           BASE_URL = "https://www.quantconnect.com/api/v2"
           user_id = os.environ["QC_USER_ID"]
@@ -62,17 +94,14 @@ jobs:
                   print(f"⚠️ Telegram failed: {e}")
 
           try:
-              # Ensure file exists
               if not pathlib.Path(file_path).is_file():
                   raise FileNotFoundError(f"File not found: {file_path}")
 
-              # === Auth header per QC spec ===
               ts = str(int(time.time()))
               hashed = hashlib.sha256(f"{api_token}:{ts}".encode()).hexdigest()
               auth = base64.b64encode(f"{user_id}:{hashed}".encode()).decode()
               headers = {"Authorization": f"Basic {auth}", "Timestamp": ts}
 
-              # === Upload ===
               with open(file_path, "rb") as f:
                   files = {"objectData": f.read()}
               data = {"organizationId": org_id, "key": key}
@@ -103,6 +132,9 @@ jobs:
               print(msg)
               send_tg(msg)
 
+              if not ok:
+                  sys.exit(1)
+
           except Exception as e:
               now_utc = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
               msg = textwrap.dedent(f"""\
@@ -115,4 +147,5 @@ jobs:
               """).strip()
               print(msg)
               send_tg(msg)
+              sys.exit(1)
           PY
