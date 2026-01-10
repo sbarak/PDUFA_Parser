@@ -1,10 +1,12 @@
 name: Upload CSV to QuantConnect Object Store
 
 on:
-  schedule:
-    # Runs daily at 03:30 UTC
-    - cron: "30 3 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "Calendar Agent/data/pdufa_master.csv"
   workflow_dispatch:
+
 
 jobs:
   upload-to-qc-objectstore:
