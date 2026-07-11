@@ -10,7 +10,7 @@ import requests
 # Configuration
 # ============================================
 
-API_KEY = os.environ.get("FMP_API_KEY", "").strip()
+API_KEY = os.environ.get("FINNHUB_API_KEY", "").strip()
 
 # Script:
 # Calendar Agent/scripts/update_market_cap.py
@@ -20,7 +20,7 @@ API_KEY = os.environ.get("FMP_API_KEY", "").strip()
 ROOT = Path(__file__).resolve().parents[1]
 CSV_FILE = ROOT / "data" / "pdufa_master.csv"
 
-REQUEST_DELAY = 0.35
+REQUEST_DELAY = 1.1
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 
@@ -31,8 +31,8 @@ MAX_RETRIES = 3
 
 if not API_KEY:
     raise RuntimeError(
-        "FMP_API_KEY is missing. Add it as a GitHub repository secret "
-        "and pass it to the workflow step."
+        "FINNHUB_API_KEY is missing. Add it as a GitHub repository "
+        "secret and pass it to this workflow step."
     )
 
 if not CSV_FILE.exists():
@@ -94,18 +94,15 @@ if not tickers:
 
 
 # ============================================
-# Download one ticker at a time
+# Download market caps
 # ============================================
+
+URL = "https://finnhub.io/api/v1/stock/profile2"
 
 session = requests.Session()
 
 market_caps: dict[str, int] = {}
 failed_tickers: list[str] = []
-
-url = (
-    "https://financialmodelingprep.com/"
-    "stable/market-capitalization"
-)
 
 for index, ticker in enumerate(tickers, start=1):
 
@@ -113,7 +110,7 @@ for index, ticker in enumerate(tickers, start=1):
 
     params = {
         "symbol": ticker,
-        "apikey": API_KEY,
+        "token": API_KEY,
     }
 
     ticker_updated = False
@@ -122,14 +119,14 @@ for index, ticker in enumerate(tickers, start=1):
 
         try:
             response = session.get(
-                url,
+                URL,
                 params=params,
                 timeout=REQUEST_TIMEOUT,
             )
 
             if response.status_code != 200:
                 error_text = (
-                    response.text[:1000]
+                    response.text[:500]
                     .replace(API_KEY, "***")
                     .replace("\n", " ")
                 )
@@ -139,17 +136,15 @@ for index, ticker in enumerate(tickers, start=1):
                     f"{error_text}"
                 )
 
-                # Retry temporary server/rate-limit errors only.
                 if (
                     response.status_code
                     in {429, 500, 502, 503, 504}
                     and attempt < MAX_RETRIES
                 ):
-                    wait_seconds = attempt * 2
+                    wait_seconds = attempt * 3
 
                     print(
-                        f"  Retrying in "
-                        f"{wait_seconds} seconds..."
+                        f"  Retrying in {wait_seconds} seconds..."
                     )
 
                     time.sleep(wait_seconds)
@@ -158,7 +153,7 @@ for index, ticker in enumerate(tickers, start=1):
                 break
 
             try:
-                results = response.json()
+                profile = response.json()
             except ValueError:
                 print(
                     "  Invalid JSON response: "
@@ -166,65 +161,51 @@ for index, ticker in enumerate(tickers, start=1):
                 )
                 break
 
-            # The successful endpoint normally returns a list.
-            if isinstance(results, dict):
-                safe_response = str(results).replace(
-                    API_KEY,
-                    "***",
-                )
-
-                print(
-                    f"  FMP response: {safe_response}"
-                )
-                break
-
-            if not isinstance(results, list):
+            if not isinstance(profile, dict):
                 print(
                     "  Unexpected response type: "
-                    f"{type(results).__name__}"
+                    f"{type(profile).__name__}"
                 )
                 break
 
-            if not results:
-                print("  No market-cap data returned.")
+            if not profile:
+                print("  No company profile returned.")
                 break
 
-            result = results[0]
+            market_cap_millions = profile.get(
+                "marketCapitalization"
+            )
 
-            returned_ticker = str(
-                result.get("symbol", ticker)
-            ).strip().upper()
-
-            market_cap = result.get("marketCap")
-
-            if market_cap is None:
+            if market_cap_millions in (None, ""):
                 print(
-                    "  Response contains no marketCap field: "
-                    f"{result}"
+                    "  No marketCapitalization field returned."
                 )
                 break
 
             try:
-                market_cap_value = int(
-                    float(market_cap)
+                # Finnhub reports market capitalization
+                # in millions of the company's currency.
+                market_cap = int(
+                    round(float(market_cap_millions) * 1_000_000)
                 )
             except (TypeError, ValueError):
                 print(
-                    f"  Invalid market-cap value: "
-                    f"{market_cap!r}"
+                    "  Invalid market-cap value: "
+                    f"{market_cap_millions!r}"
                 )
                 break
 
-            market_caps[returned_ticker] = (
-                market_cap_value
-            )
+            if market_cap <= 0:
+                print(
+                    f"  Invalid or zero market cap: {market_cap}"
+                )
+                break
 
-            print(
-                f"  Market cap: "
-                f"{market_cap_value:,}"
-            )
-
+            market_caps[ticker] = market_cap
             ticker_updated = True
+
+            print(f"  Market cap: {market_cap:,}")
+
             break
 
         except requests.Timeout:
@@ -235,11 +216,10 @@ for index, ticker in enumerate(tickers, start=1):
             )
 
             if attempt < MAX_RETRIES:
-                wait_seconds = attempt * 2
+                wait_seconds = attempt * 3
 
                 print(
-                    f"  Retrying in "
-                    f"{wait_seconds} seconds..."
+                    f"  Retrying in {wait_seconds} seconds..."
                 )
 
                 time.sleep(wait_seconds)
@@ -252,11 +232,10 @@ for index, ticker in enumerate(tickers, start=1):
             print(f"  Request failed: {exc}")
 
             if attempt < MAX_RETRIES:
-                wait_seconds = attempt * 2
+                wait_seconds = attempt * 3
 
                 print(
-                    f"  Retrying in "
-                    f"{wait_seconds} seconds..."
+                    f"  Retrying in {wait_seconds} seconds..."
                 )
 
                 time.sleep(wait_seconds)
@@ -281,8 +260,9 @@ mapped_market_caps = df["ticker"].map(
     market_caps
 )
 
-# Update only tickers successfully returned by FMP.
-# Keep the old market cap when a request fails.
+# Only overwrite a CSV value when Finnhub returned
+# a valid market cap. Existing values are preserved
+# when a request fails.
 df["market_cap"] = mapped_market_caps.where(
     mapped_market_caps.notna(),
     old_market_caps,
@@ -339,7 +319,7 @@ if failed_tickers:
 
 
 # ============================================
-# Save atomically
+# Save CSV atomically
 # ============================================
 
 temporary_file = CSV_FILE.with_suffix(
