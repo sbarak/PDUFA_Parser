@@ -8,7 +8,7 @@ import time
 # ============================================
 
 API_KEY = os.environ["FMP_API_KEY"]
-CSV_FILE = "data/pdufa_master.csv"
+CSV_FILE = "Calendar Agent/data/pdufa_master.csv"
 
 BATCH_SIZE = 20
 REQUEST_DELAY = 0.25   # Seconds between requests
