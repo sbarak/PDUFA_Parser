@@ -1,4 +1,5 @@
 import pandas as pd
+import os
 import requests
 import time
 
@@ -6,8 +7,8 @@ import time
 # Configuration
 # ============================================
 
-API_KEY = "YOUR_FMP_API_KEY"
-CSV_FILE = "PDUFA_Future.csv"
+API_KEY = os.environ["FMP_API_KEY"]
+CSV_FILE = "data/pdufa_master.csv"
 
 BATCH_SIZE = 20
 REQUEST_DELAY = 0.25   # Seconds between requests
