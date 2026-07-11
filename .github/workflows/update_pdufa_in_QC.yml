@@ -87,7 +87,7 @@ jobs:
       - name: Update market caps
         run: python "Calendar Agent/scripts/update_market_cap.py"
         env:
-          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
     
       - name: Upload to QuantConnect ObjectStore (only if pushed)
         if: steps.push.outputs.pushed == 'true'
