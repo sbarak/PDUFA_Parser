@@ -12,10 +12,10 @@ import requests
 
 API_KEY = os.environ.get("FMP_API_KEY", "").strip()
 
-# Script location:
+# Script:
 # Calendar Agent/scripts/update_market_cap.py
 #
-# CSV location:
+# CSV:
 # Calendar Agent/data/pdufa_master.csv
 ROOT = Path(__file__).resolve().parents[1]
 CSV_FILE = ROOT / "data" / "pdufa_master.csv"
@@ -32,7 +32,7 @@ MAX_RETRIES = 3
 if not API_KEY:
     raise RuntimeError(
         "FMP_API_KEY is missing. Add it as a GitHub repository secret "
-        "and pass it to this workflow step."
+        "and pass it to the workflow step."
     )
 
 if not CSV_FILE.exists():
@@ -70,7 +70,7 @@ if missing_columns:
 
 
 # ============================================
-# Clean ticker values
+# Normalize tickers
 # ============================================
 
 df["ticker"] = (
@@ -94,26 +94,29 @@ if not tickers:
 
 
 # ============================================
-# Download market cap one ticker at a time
+# Download one ticker at a time
 # ============================================
 
 session = requests.Session()
+
 market_caps: dict[str, int] = {}
+failed_tickers: list[str] = []
+
+url = (
+    "https://financialmodelingprep.com/"
+    "stable/market-capitalization"
+)
 
 for index, ticker in enumerate(tickers, start=1):
 
     print(f"[{index}/{len(tickers)}] {ticker}")
 
-    url = (
-        "https://financialmodelingprep.com/api/v3/profile/"
-        f"{ticker}"
-    )
-
     params = {
+        "symbol": ticker,
         "apikey": API_KEY,
     }
 
-    success = False
+    ticker_updated = False
 
     for attempt in range(1, MAX_RETRIES + 1):
 
@@ -125,27 +128,37 @@ for index, ticker in enumerate(tickers, start=1):
             )
 
             if response.status_code != 200:
-                error_text = response.text[:1000]
-                error_text = error_text.replace(API_KEY, "***")
+                error_text = (
+                    response.text[:1000]
+                    .replace(API_KEY, "***")
+                    .replace("\n", " ")
+                )
 
                 print(
                     f"  HTTP Error {response.status_code}: "
                     f"{error_text}"
                 )
 
-                if response.status_code in {429, 500, 502, 503, 504}:
-                    if attempt < MAX_RETRIES:
-                        wait_seconds = attempt * 2
-                        print(
-                            f"  Retrying in {wait_seconds} seconds..."
-                        )
-                        time.sleep(wait_seconds)
-                        continue
+                # Retry temporary server/rate-limit errors only.
+                if (
+                    response.status_code
+                    in {429, 500, 502, 503, 504}
+                    and attempt < MAX_RETRIES
+                ):
+                    wait_seconds = attempt * 2
+
+                    print(
+                        f"  Retrying in "
+                        f"{wait_seconds} seconds..."
+                    )
+
+                    time.sleep(wait_seconds)
+                    continue
 
                 break
 
             try:
-                profiles = response.json()
+                results = response.json()
             except ValueError:
                 print(
                     "  Invalid JSON response: "
@@ -153,36 +166,48 @@ for index, ticker in enumerate(tickers, start=1):
                 )
                 break
 
-            if isinstance(profiles, dict):
-                safe_response = str(profiles).replace(API_KEY, "***")
-                print(f"  FMP response: {safe_response}")
-                break
+            # The successful endpoint normally returns a list.
+            if isinstance(results, dict):
+                safe_response = str(results).replace(
+                    API_KEY,
+                    "***",
+                )
 
-            if not isinstance(profiles, list):
                 print(
-                    "  Unexpected response type: "
-                    f"{type(profiles).__name__}"
+                    f"  FMP response: {safe_response}"
                 )
                 break
 
-            if not profiles:
-                print("  No profile returned.")
+            if not isinstance(results, list):
+                print(
+                    "  Unexpected response type: "
+                    f"{type(results).__name__}"
+                )
                 break
 
-            profile = profiles[0]
-
-            returned_ticker = str(
-                profile.get("symbol", ticker)
-            ).strip().upper()
-
-            market_cap = profile.get("marketCap")
-
-            if market_cap is None:
+            if not results:
                 print("  No market-cap data returned.")
                 break
 
+            result = results[0]
+
+            returned_ticker = str(
+                result.get("symbol", ticker)
+            ).strip().upper()
+
+            market_cap = result.get("marketCap")
+
+            if market_cap is None:
+                print(
+                    "  Response contains no marketCap field: "
+                    f"{result}"
+                )
+                break
+
             try:
-                market_cap_value = int(float(market_cap))
+                market_cap_value = int(
+                    float(market_cap)
+                )
             except (TypeError, ValueError):
                 print(
                     f"  Invalid market-cap value: "
@@ -190,17 +215,20 @@ for index, ticker in enumerate(tickers, start=1):
                 )
                 break
 
-            market_caps[returned_ticker] = market_cap_value
+            market_caps[returned_ticker] = (
+                market_cap_value
+            )
 
             print(
                 f"  Market cap: "
                 f"{market_cap_value:,}"
             )
 
-            success = True
+            ticker_updated = True
             break
 
         except requests.Timeout:
+
             print(
                 f"  Request timed out after "
                 f"{REQUEST_TIMEOUT} seconds."
@@ -208,26 +236,36 @@ for index, ticker in enumerate(tickers, start=1):
 
             if attempt < MAX_RETRIES:
                 wait_seconds = attempt * 2
+
                 print(
-                    f"  Retrying in {wait_seconds} seconds..."
+                    f"  Retrying in "
+                    f"{wait_seconds} seconds..."
                 )
+
                 time.sleep(wait_seconds)
                 continue
 
+            break
+
         except requests.RequestException as exc:
+
             print(f"  Request failed: {exc}")
 
             if attempt < MAX_RETRIES:
                 wait_seconds = attempt * 2
+
                 print(
-                    f"  Retrying in {wait_seconds} seconds..."
+                    f"  Retrying in "
+                    f"{wait_seconds} seconds..."
                 )
+
                 time.sleep(wait_seconds)
                 continue
 
-        break
+            break
 
-    if not success:
+    if not ticker_updated:
+        failed_tickers.append(ticker)
         print(f"  Failed to update {ticker}")
 
     time.sleep(REQUEST_DELAY)
@@ -239,12 +277,14 @@ for index, ticker in enumerate(tickers, start=1):
 
 old_market_caps = df["market_cap"].copy()
 
-new_market_caps = df["ticker"].map(market_caps)
+mapped_market_caps = df["ticker"].map(
+    market_caps
+)
 
-# Replace only when a valid new value was returned.
-# Existing values remain unchanged when a request fails.
-df["market_cap"] = new_market_caps.where(
-    new_market_caps.notna(),
+# Update only tickers successfully returned by FMP.
+# Keep the old market cap when a request fails.
+df["market_cap"] = mapped_market_caps.where(
+    mapped_market_caps.notna(),
     old_market_caps,
 )
 
@@ -266,7 +306,10 @@ df["market_cap"] = df["market_cap"].apply(
 )
 
 changed_rows = int(
-    (df["market_cap"] != old_market_caps).sum()
+    (
+        df["market_cap"].astype(str)
+        != old_market_caps.astype(str)
+    ).sum()
 )
 
 populated_rows = int(
@@ -277,17 +320,31 @@ populated_rows = int(
     .sum()
 )
 
+
+# ============================================
+# Results
+# ============================================
+
 print()
 print(f"Market caps received: {len(market_caps)}")
 print(f"Rows changed: {changed_rows}")
 print(f"Rows containing market cap: {populated_rows}")
+print(f"Tickers failed: {len(failed_tickers)}")
+
+if failed_tickers:
+    print(
+        "Failed ticker list: "
+        + ", ".join(failed_tickers)
+    )
 
 
 # ============================================
-# Save CSV atomically
+# Save atomically
 # ============================================
 
-temporary_file = CSV_FILE.with_suffix(".tmp.csv")
+temporary_file = CSV_FILE.with_suffix(
+    ".tmp.csv"
+)
 
 df.to_csv(
     temporary_file,
