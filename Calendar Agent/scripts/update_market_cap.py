@@ -12,19 +12,21 @@ import requests
 
 API_KEY = os.environ.get("FMP_API_KEY", "").strip()
 
-# Resolve the CSV path relative to this script:
+# Script location:
 # Calendar Agent/scripts/update_market_cap.py
+#
+# CSV location:
 # Calendar Agent/data/pdufa_master.csv
 ROOT = Path(__file__).resolve().parents[1]
 CSV_FILE = ROOT / "data" / "pdufa_master.csv"
 
-BATCH_SIZE = 20
-REQUEST_DELAY = 0.5
+REQUEST_DELAY = 0.35
 REQUEST_TIMEOUT = 30
+MAX_RETRIES = 3
 
 
 # ============================================
-# Validate configuration
+# Validation
 # ============================================
 
 if not API_KEY:
@@ -92,142 +94,141 @@ if not tickers:
 
 
 # ============================================
-# Download market caps in batches
+# Download market cap one ticker at a time
 # ============================================
 
-market_caps = {}
-
 session = requests.Session()
+market_caps: dict[str, int] = {}
 
-total_batches = (
-    len(tickers) + BATCH_SIZE - 1
-) // BATCH_SIZE
+for index, ticker in enumerate(tickers, start=1):
 
-for start_index in range(0, len(tickers), BATCH_SIZE):
-
-    batch = tickers[
-        start_index:start_index + BATCH_SIZE
-    ]
-
-    batch_number = (
-        start_index // BATCH_SIZE
-    ) + 1
-
-    symbols = ",".join(batch)
-
-    print(
-        f"Batch {batch_number}/{total_batches}: "
-        f"{symbols}"
-    )
+    print(f"[{index}/{len(tickers)}] {ticker}")
 
     url = (
-        "https://financialmodelingprep.com/"
-        "stable/market-capitalization-batch"
+        "https://financialmodelingprep.com/api/v3/profile/"
+        f"{ticker}"
     )
 
     params = {
-        "symbols": symbols,
         "apikey": API_KEY,
     }
 
-    try:
-        response = session.get(
-            url,
-            params=params,
-            timeout=REQUEST_TIMEOUT,
-        )
+    success = False
 
-        if response.status_code != 200:
-            # Show the actual FMP error without exposing the API key.
-            error_text = response.text[:1000]
-            error_text = error_text.replace(API_KEY, "***")
-
-            print(
-                f"HTTP Error {response.status_code}: "
-                f"{error_text}"
-            )
-            continue
+    for attempt in range(1, MAX_RETRIES + 1):
 
         try:
-            results = response.json()
-        except ValueError:
-            print(
-                "FMP returned invalid JSON: "
-                f"{response.text[:500]}"
+            response = session.get(
+                url,
+                params=params,
+                timeout=REQUEST_TIMEOUT,
             )
-            continue
 
-        # Successful batch responses should be lists.
-        # Error responses may be dictionaries.
-        if isinstance(results, dict):
-            safe_result = str(results).replace(API_KEY, "***")
-            print(f"FMP error response: {safe_result}")
-            continue
+            if response.status_code != 200:
+                error_text = response.text[:1000]
+                error_text = error_text.replace(API_KEY, "***")
 
-        if not isinstance(results, list):
-            print(
-                "Unexpected FMP response type: "
-                f"{type(results).__name__}"
-            )
-            continue
+                print(
+                    f"  HTTP Error {response.status_code}: "
+                    f"{error_text}"
+                )
 
-        returned_tickers = set()
+                if response.status_code in {429, 500, 502, 503, 504}:
+                    if attempt < MAX_RETRIES:
+                        wait_seconds = attempt * 2
+                        print(
+                            f"  Retrying in {wait_seconds} seconds..."
+                        )
+                        time.sleep(wait_seconds)
+                        continue
 
-        for result in results:
-
-            ticker = str(
-                result.get("symbol", "")
-            ).strip().upper()
-
-            market_cap = result.get("marketCap")
-
-            if not ticker:
-                continue
-
-            if market_cap is None:
-                print(f"  {ticker:<8} No market-cap data")
-                continue
+                break
 
             try:
-                market_cap = int(float(market_cap))
+                profiles = response.json()
+            except ValueError:
+                print(
+                    "  Invalid JSON response: "
+                    f"{response.text[:500]}"
+                )
+                break
+
+            if isinstance(profiles, dict):
+                safe_response = str(profiles).replace(API_KEY, "***")
+                print(f"  FMP response: {safe_response}")
+                break
+
+            if not isinstance(profiles, list):
+                print(
+                    "  Unexpected response type: "
+                    f"{type(profiles).__name__}"
+                )
+                break
+
+            if not profiles:
+                print("  No profile returned.")
+                break
+
+            profile = profiles[0]
+
+            returned_ticker = str(
+                profile.get("symbol", ticker)
+            ).strip().upper()
+
+            market_cap = profile.get("marketCap")
+
+            if market_cap is None:
+                print("  No market-cap data returned.")
+                break
+
+            try:
+                market_cap_value = int(float(market_cap))
             except (TypeError, ValueError):
                 print(
-                    f"  {ticker:<8} Invalid market cap: "
+                    f"  Invalid market-cap value: "
                     f"{market_cap!r}"
                 )
+                break
+
+            market_caps[returned_ticker] = market_cap_value
+
+            print(
+                f"  Market cap: "
+                f"{market_cap_value:,}"
+            )
+
+            success = True
+            break
+
+        except requests.Timeout:
+            print(
+                f"  Request timed out after "
+                f"{REQUEST_TIMEOUT} seconds."
+            )
+
+            if attempt < MAX_RETRIES:
+                wait_seconds = attempt * 2
+                print(
+                    f"  Retrying in {wait_seconds} seconds..."
+                )
+                time.sleep(wait_seconds)
                 continue
 
-            market_caps[ticker] = market_cap
-            returned_tickers.add(ticker)
+        except requests.RequestException as exc:
+            print(f"  Request failed: {exc}")
 
-            print(
-                f"  {ticker:<8} "
-                f"{market_cap:,}"
-            )
+            if attempt < MAX_RETRIES:
+                wait_seconds = attempt * 2
+                print(
+                    f"  Retrying in {wait_seconds} seconds..."
+                )
+                time.sleep(wait_seconds)
+                continue
 
-        not_returned = [
-            ticker
-            for ticker in batch
-            if ticker not in returned_tickers
-        ]
+        break
 
-        if not_returned:
-            print(
-                "  No valid result returned for: "
-                + ", ".join(not_returned)
-            )
-
-    except requests.Timeout:
-        print(
-            f"Batch {batch_number} timed out "
-            f"after {REQUEST_TIMEOUT} seconds."
-        )
-
-    except requests.RequestException as exc:
-        print(
-            f"Batch {batch_number} request failed: "
-            f"{exc}"
-        )
+    if not success:
+        print(f"  Failed to update {ticker}")
 
     time.sleep(REQUEST_DELAY)
 
@@ -240,17 +241,14 @@ old_market_caps = df["market_cap"].copy()
 
 new_market_caps = df["ticker"].map(market_caps)
 
-# Replace the existing value only when FMP returned
-# a valid market cap. Existing values are preserved
-# when a ticker fails or is not returned.
+# Replace only when a valid new value was returned.
+# Existing values remain unchanged when a request fails.
 df["market_cap"] = new_market_caps.where(
     new_market_caps.notna(),
     old_market_caps,
 )
 
 
-# Convert populated values to whole-number strings.
-# This avoids CSV values such as 1500000000.0.
 def normalize_market_cap(value) -> str:
     value = str(value).strip()
 
@@ -267,11 +265,11 @@ df["market_cap"] = df["market_cap"].apply(
     normalize_market_cap
 )
 
-changed_rows = (
-    df["market_cap"] != old_market_caps
-).sum()
+changed_rows = int(
+    (df["market_cap"] != old_market_caps).sum()
+)
 
-populated_rows = (
+populated_rows = int(
     df["market_cap"]
     .astype(str)
     .str.strip()
