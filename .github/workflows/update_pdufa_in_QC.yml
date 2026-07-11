@@ -83,7 +83,13 @@ jobs:
 
           echo "pushed=false" >> "$GITHUB_OUTPUT"
           exit 1
-
+          
+      - name: Update market caps
+        run: |
+          python scripts/update_market_cap.py
+        env:
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+    
       - name: Upload to QuantConnect ObjectStore (only if pushed)
         if: steps.push.outputs.pushed == 'true'
         env:
