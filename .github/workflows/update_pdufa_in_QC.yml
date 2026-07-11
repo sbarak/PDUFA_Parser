@@ -44,7 +44,12 @@ jobs:
         env:
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
         run: python "Calendar Agent/src/main.py"
-
+        
+      - name: Update market caps
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: python "Calendar Agent/scripts/update_market_cap.py"
+        
       - name: Configure Git author
         run: |
           git config user.name "pdufa-bot"
@@ -83,11 +88,6 @@ jobs:
 
           echo "pushed=false" >> "$GITHUB_OUTPUT"
           exit 1
-          
-      - name: Update market caps
-        run: python "Calendar Agent/scripts/update_market_cap.py"
-        env:
-          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
     
       - name: Upload to QuantConnect ObjectStore (only if pushed)
         if: steps.push.outputs.pushed == 'true'
