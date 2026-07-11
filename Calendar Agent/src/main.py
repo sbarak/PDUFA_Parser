@@ -20,8 +20,8 @@ MASTER_CSV = DATA / "pdufa_master.csv"  # resolved only
 BLANK_CSV  = DATA / "blank.csv"         # unresolved (no ticker)
 STATE_JSON = DATA / "state.json"
 
-# Master CSV schema (2 columns)
-CSV_FIELDS = ["ticker", "pdufa_date"]
+# Master CSV schema
+CSV_FIELDS = ["ticker", "pdufa_date", "market_cap"]
 
 
 def read_master_df() -> pd.DataFrame:
@@ -166,6 +166,7 @@ def main():
     # ---- Merge resolved into master CSV ----
     df_master = read_master_df()
     for r in df_resolved[["ticker", "pdufa_date"]].fillna("").to_dict(orient="records"):
+        r["market_cap"] = ""
         df_master = upsert(df_master, r)
 
     # Sort master by date then ticker
